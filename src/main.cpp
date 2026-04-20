@@ -44,6 +44,9 @@ const unsigned long period = 100;  //the value is a number of milliseconds
   int QCremainCapacity2 = 0;
   int QCremainCapacity = 0;
 
+  int ChgPwrStatMask = 0b00000011;  // Mask to extract the 2 bits of the charge power status from the CAN message
+  int ChgPwrStat = 0;  // Charge power status for battery 00b = Reserved 01b = Normal limit PIN 10b = High rate limit PIN 11b = Immediate limit PIN
+
   // int temperature1 = 0;
   // int temperature2 = 0;
   // int temperature = 0;
@@ -79,7 +82,7 @@ void setup(void) {
 }
 
 void loop() {
-  if ( can1.read(msg) ) {
+  if ( can1.read(msg) ) {   // Can messages from battery 1 are read, processed, and sent to the zombieverter (can3)
     const uint8_t *bytes = msg.buf;
   switch (msg.id) {
     case 0x1DB: {
@@ -91,6 +94,7 @@ void loop() {
       dislimit1 = (uint16_t(bytes[0] << 2) + uint16_t(bytes[1] >> 6));              // * 0.25;  // Kw discharge limit
       chglimit1 = (uint16_t((bytes[1] & 0x3F) << 4) + uint16_t(bytes[2] >> 4));     // * 0.25;  // Kw regen limit
       chargelimit1 = (uint16_t((bytes[2] & 0x0F) << 6) + uint16_t(bytes[3] >> 2));  // * 0.1;  // Kw charger limit
+      ChgPwrStat = (bytes[3] & ChgPwrStatMask);  // Extract charge power status from the CAN message
       break;
     }
     case 0x55B: {
@@ -110,7 +114,7 @@ void loop() {
   }
   
  }
-  else if ( can2.read(msg) ) {
+  else if ( can2.read(msg) ) {    // Battery 2 messages are read, processed, and sent to the zombieverter (can3)
   const uint8_t *bytes = msg.buf;
   switch (msg.id) {
     case 0x1DB: {
@@ -165,7 +169,12 @@ void loop() {
       msg.buf[0] = highByte(dislimit);
       msg.buf[1] = lowByte(dislimit) + highByte(chglimit);
       msg.buf[2] = lowByte(chglimit) + highByte(chargelimit);
-      msg.buf[3] = bytes[3] & B00000011;
+      if (ChgPwrStat > (msg.buf[3] & ChgPwrStatMask))  {  // If the charge power status from battery 1 is more limiting than that from battery 2, use it in the CAN message to the zombieverter
+        msg.buf[3] = ChgPwrStat;  // Add the charge power status from battery 1 to the CAN message
+      }
+      else {
+        msg.buf[3] = bytes[3] & B00000011;
+      }
       msg.buf[3] = msg.buf[3] + lowByte(chargelimit);
 
       for ( uint8_t i = 0; i < 7; i++ ) {
