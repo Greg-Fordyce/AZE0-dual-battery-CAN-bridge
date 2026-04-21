@@ -13,7 +13,7 @@ unsigned long currentMillis;
 const unsigned long period = 100;  //the value is a number of milliseconds
 
 
-  int battVolt1 = 0;
+  int battVolt1 = 0; 
   int battVolt2 = 0;
   int battVolt = 0;
   int battCur1 = 0;
@@ -46,6 +46,24 @@ const unsigned long period = 100;  //the value is a number of milliseconds
 
   int ChgPwrStatMask = 0b00000011;  // Mask to extract the 2 bits of the charge power status from the CAN message
   int ChgPwrStat = 0;  // Charge power status for battery 00b = Reserved 01b = Normal limit PIN 10b = High rate limit PIN 11b = Immediate limit PIN
+  int BPCmaxUprateMask = 0b11100000;  // Mask to extract the 3 bits of the max uprate for battery charge power status from the CAN message
+  int BPCmaxUprate = 0;  // Max uprate for battery charge power status 
+
+  //0x5C0 values
+  int HDhighLowVtime1[4] = {0}; 
+  int HDtempWakeup1[4] = {0};
+  int HDtemperature1[4] = {0};
+  int HDintCurr1[4] = {0};
+  int HDirCoef1[4] = {0};
+  int HDcellV1[4] = {0};
+
+  int HDhighLowVtime2[4] = {0};
+  int HDtempWakeup2[4] = {0}; 
+  int HDtemperature2[4] = {0};
+  int HDintCurr2[4] = {0};
+  int HDirCoef2[4] = {0};
+  int HDcellV2[4] = {0};
+
 
   // int temperature1 = 0;
   // int temperature2 = 0;
@@ -95,6 +113,7 @@ void loop() {
       chglimit1 = (uint16_t((bytes[1] & 0x3F) << 4) + uint16_t(bytes[2] >> 4));     // * 0.25;  // Kw regen limit
       chargelimit1 = (uint16_t((bytes[2] & 0x0F) << 6) + uint16_t(bytes[3] >> 2));  // * 0.1;  // Kw charger limit
       ChgPwrStat = (bytes[3] & ChgPwrStatMask);  // Extract charge power status from the CAN message
+      BPCmaxUprate = (bytes[4] & BPCmaxUprateMask);  // Extract max uprate for battery charge power status from the CAN message
       break;
     }
     case 0x55B: {
@@ -111,9 +130,20 @@ void loop() {
       tempSegment1 = (uint16_t(bytes[3]));                   // Temp segment for dashboard
       break;
     }
+    case 0x5C0: {
+      int mux = bytes[0] >> 6;
+      HDhighLowVtime1[mux] = (uint16_t(bytes[0] & 0b00001111));
+      HDtempWakeup1[mux] = (uint16_t(bytes[1] & 0b11111110));
+      HDtemperature1[mux] = uint16_t(bytes[2]);
+      HDintCurr1[mux] = uint16_t(bytes[3]);
+      HDirCoef1[mux] = (uint16_t(bytes[4] & 0b11111110));
+      HDcellV1[mux] = (uint16_t(bytes[5]));
+      }
+      break;
+    }
   }
   
- }
+ 
   else if ( can2.read(msg) ) {    // Battery 2 messages are read, processed, and sent to the zombieverter (can3)
   const uint8_t *bytes = msg.buf;
   switch (msg.id) {
@@ -176,7 +206,13 @@ void loop() {
         msg.buf[3] = bytes[3] & B00000011;
       }
       msg.buf[3] = msg.buf[3] + lowByte(chargelimit);
-
+      if (BPCmaxUprate < (msg.buf[4] & BPCmaxUprateMask))  {  // If the max uprate for battery charge power status from battery 1 is more limiting than that from battery 2, use it in the CAN message to the zombieverter
+        msg.buf[4] = (msg.buf[4] & BPCmaxUprateMask); // Clear battery 2 value from the CAN message
+        msg.buf[4] += BPCmaxUprate;  // Add the max uprate for battery charge power status from battery 1 to the CAN message
+      }
+      else {
+        msg.buf[4] = bytes[4] & B11100000;
+      }
       for ( uint8_t i = 0; i < 7; i++ ) {
         crc.add(msg.buf[i]);
       }
@@ -234,10 +270,8 @@ void loop() {
       Serial.print(" Wh, QC remaining capacity2: ");
       Serial.print(QCremainCapacity2);
       Serial.println(" Wh");
-      
       break;
     }
-
      case 0x5BC: {
       GIDS2 = (uint16_t(bytes[0] << 2) + uint16_t(bytes[1] >> 6));                   // GIDS
       GIDS = GIDS1 + GIDS2;
@@ -247,13 +281,90 @@ void loop() {
       tempSegment2 = (uint16_t(bytes[3]));                   // Temp segment for dashboard
       if (tempSegment1 > tempSegment2) {
         msg.buf[3] = tempSegment1;
-      }
-      
+        }
       break;
       }
+
+      case 0x5C0: {
+        int mux = bytes[0] >> 6;
+        HDhighLowVtime2[mux] = (uint16_t(bytes[0] & 0b00001111));
+        HDtempWakeup2[mux] = (uint16_t(bytes[1] & 0b11111110));
+        HDtemperature2[mux] = uint16_t(bytes[2]);       
+        HDintCurr2[mux] = uint16_t(bytes[3]);
+        HDirCoef2[mux] = (uint16_t(bytes[4] & 0b11111110));
+        HDcellV2[mux] = (uint16_t(bytes[5]));
+        switch (mux){
+          case 1:{
+            if (HDhighLowVtime1[mux] > HDhighLowVtime2[mux]) {
+              msg.buf[0] &= 0b11110000; // Clear the bits used for HDhighLowVtime
+              msg.buf[0] += HDhighLowVtime1[mux]; // Add the HDhighLowVtime from battery 1 to the CAN message
+            }
+            if (HDtempWakeup1[mux] > HDtempWakeup2[mux]) {
+              msg.buf[1] &= 0b00000001; // Clear the bits used for HDtempWakeup
+              msg.buf[1] += (HDtempWakeup1[mux]); // Add the HDtempWakeup from battery 1 to the CAN message
+            }
+            if (HDtemperature1[mux] > HDtemperature2[mux]) {
+              msg.buf[2] = HDtemperature1[mux];
+            }
+            if (HDintCurr1[mux] > HDintCurr2[mux]) {
+              msg.buf[3] = HDintCurr1[mux];
+            }
+            if (HDirCoef1[mux] > HDirCoef2[mux]) {
+              msg.buf[4] &= 0b00000001; // Clear the bits used for HDirCoef
+              msg.buf[4] += HDirCoef1[mux]; // Add the HDirCoef from battery 1 to the CAN message
+            }
+            if (HDcellV1[mux] > HDcellV2[mux]) {
+              msg.buf[5] = (HDcellV1[mux] << 2);
+            }
+          break;
+          }
+          case 2:{
+            msg.buf[0] &= 0b11110000; // Clear the bits used for HDhighLowVtime
+            msg.buf[0] += ((HDhighLowVtime1[mux] + HDhighLowVtime2[mux]) /2); // Average of HDhighLowVtime from battery 1 and battery 2 added to the CAN message
+            
+            msg.buf[1] &= 0b00000001; // Clear the bits used for HDtempWakeup
+            msg.buf[1] += ((HDtempWakeup1[mux] + HDtempWakeup2[mux]) / 2); // Average of HDtempWakeup from battery 1 and battery 2 added to the CAN message
+
+            msg.buf[2] = ((HDtemperature1[mux] + HDtemperature2[mux]) / 2); // Average of HDtemperature from battery 1 and battery 2 added to the CAN message
+            
+            msg.buf[3] = ((HDintCurr1[mux] + HDintCurr2[mux]) / 2); // Average of HDintCurr from battery 1 and battery 2 added to the CAN message
+            
+            msg.buf[4] &= 0b00000001; // Clear the bits used for HDirCoef
+            msg.buf[4] += ((HDirCoef1[mux] + HDirCoef2[mux]) / 2 ); // Average of HDirCoef from battery 1 and battery 2 added to the CAN message
+            
+            msg.buf[5] = (((HDcellV1[mux] + HDcellV2[mux]) / 2) << 2); // Average of HDcellV from battery 1 and battery 2 added to the CAN message
+            break;
+          }
+          case 3:{
+            if (HDhighLowVtime1[mux] < HDhighLowVtime2[mux]) {
+              msg.buf[0] &= 0b11110000; // Clear the bits used for HDhighLowVtime
+              msg.buf[0] += HDhighLowVtime1[mux]; // Add the HDhighLowVtime from battery 1 to the CAN message
+            }
+            if (HDtempWakeup1[mux] < HDtempWakeup2[mux]) {
+              msg.buf[1] &= 0b00000001; // Clear the bits used for HDtempWakeup
+              msg.buf[1] += (HDtempWakeup1[mux]); // Add the HDtempWakeup from battery 1 to the CAN message
+            }
+            if (HDtemperature1[mux] < HDtemperature2[mux]) {
+              msg.buf[2] = HDtemperature1[mux];
+            }
+            if (HDintCurr1[mux] < HDintCurr2[mux]) {
+              msg.buf[3] = HDintCurr1[mux];
+            }
+            if (HDirCoef1[mux] < HDirCoef2[mux]) {
+              msg.buf[4] &= 0b00000001; // Clear the bits used for HDirCoef
+              msg.buf[4] += HDirCoef1[mux]; // Add the HDirCoef from battery 1 to the CAN message
+            }
+            if (HDcellV1[mux] < HDcellV2[mux]) {
+              msg.buf[5] = (HDcellV1[mux] << 2);
+            }
+          break;
+          }
+        }
+      }
     }
-    can3.write(msg);
-  }
+can3.write(msg);
+  } 
+
   else if ( can3.read(msg) ) {
     can1.write(msg);
     can2.write(msg);
