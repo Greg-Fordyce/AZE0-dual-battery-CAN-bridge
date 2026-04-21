@@ -122,7 +122,8 @@ void loop() {
     }
     case 0x59E: {
       QCfullCapacity1 = (uint16_t(bytes[2] << 4) + uint16_t(bytes[3] >> 4));                   // * 100 Wh
-      QCremainCapacity1 = (uint16_t(bytes[3] << 5) + uint16_t(bytes[4] >> 3));                   // * 100 Wh
+      QCremainCapacity1 = (uint16_t(bytes[3] << 5) + uint16_t(bytes[4] >> 3));
+      QCremainCapacity1 &= 0b0000000111111111;  // Mask to ensure only the bits used for QC remaining capacity are included
       break;
     }
     case 0x5BC: {
@@ -248,8 +249,7 @@ void loop() {
       QCremainCapacity2 = (uint16_t(bytes[3] << 5) + uint16_t(bytes[4] >> 3));                   // * 100 Wh
       QCfullCapacity = QCfullCapacity1 + QCfullCapacity2;
       QCremainCapacity = QCremainCapacity1 + QCremainCapacity2;
-      //QCfullCapacity = QCfullCapacity << 4;
-      //QCremainCapacity = QCremainCapacity << 3;
+      QCremainCapacity1 &= 0b0000000111111111; // Mask to ensure only the bits used for QC remaining capacity are included
       
       msg.buf[2] = QCfullCapacity >> 4;
       msg.buf[3] = lowByte(QCfullCapacity << 4) + (QCremainCapacity >> 5);
