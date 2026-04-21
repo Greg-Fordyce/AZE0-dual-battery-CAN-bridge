@@ -248,8 +248,8 @@ void loop() {
       QCremainCapacity2 = (uint16_t(bytes[3] << 5) + uint16_t(bytes[4] >> 3));                   // * 100 Wh
       QCfullCapacity = QCfullCapacity1 + QCfullCapacity2;
       QCremainCapacity = QCremainCapacity1 + QCremainCapacity2;
-      QCfullCapacity = QCfullCapacity << 4;
-      QCremainCapacity = QCremainCapacity << 3;
+      //QCfullCapacity = QCfullCapacity << 4;
+      //QCremainCapacity = QCremainCapacity << 3;
       
       msg.buf[2] = QCfullCapacity >> 4;
       msg.buf[3] = lowByte(QCfullCapacity << 4) + (QCremainCapacity >> 5);
@@ -257,19 +257,19 @@ void loop() {
 
       Serial.print("QC full capacity: ");
       Serial.print(QCfullCapacity); 
-      Serial.print(" Wh, QC remaining capacity: ");
+      Serial.print("00 Wh, QC remaining capacity: ");
       Serial.print(QCremainCapacity);
-      Serial.println(" Wh");
+      Serial.println("00 Wh");
       Serial.print("QC full capacity1: ");
       Serial.print(QCfullCapacity1);  
-      Serial.print(" Wh, QC remaining capacity1: ");
+      Serial.print("00 Wh, QC remaining capacity1: ");
       Serial.print(QCremainCapacity1);
-      Serial.println(" Wh");
+      Serial.println("00 Wh");
       Serial.print("QC full capacity2: ");
       Serial.print(QCfullCapacity2);  
-      Serial.print(" Wh, QC remaining capacity2: ");
+      Serial.print("00 Wh, QC remaining capacity2: ");
       Serial.print(QCremainCapacity2);
-      Serial.println(" Wh");
+      Serial.println("00 Wh");
       break;
     }
      case 0x5BC: {
@@ -285,7 +285,11 @@ void loop() {
       break;
       }
 
-      case 0x5C0: {
+      // Messages with this ID contain data for multiple muxes. The mux is determined by the first 2 bits of the first byte of the CAN message. 
+      // Data for each mux is stored in separate arrays for battery 1 and battery 2, and the appropriate values are added to the CAN message sent
+      // to the zombieverter based on comparisons between the values from battery 1 and battery 2 for each mux.
+      // Fault codes still need to be added to this section.
+      case 0x5C0: {  
         int mux = bytes[0] >> 6;
         HDhighLowVtime2[mux] = (uint16_t(bytes[0] & 0b00001111));
         HDtempWakeup2[mux] = (uint16_t(bytes[1] & 0b11111110));
