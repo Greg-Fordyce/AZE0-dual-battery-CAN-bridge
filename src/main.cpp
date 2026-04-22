@@ -64,6 +64,10 @@ const unsigned long period = 100;  //the value is a number of milliseconds
   int HDirCoef2[4] = {0};
   int HDcellV2[4] = {0};
 
+  bool IRfault1 = 0;
+  bool LBempty1 = 0;
+  bool LBsleep1 = 0;
+
 
   // int temperature1 = 0;
   // int temperature2 = 0;
@@ -118,6 +122,27 @@ void loop() {
     }
     case 0x55B: {
       soc1 = (uint16_t(bytes[0] << 2) + uint16_t(bytes[1] >> 6));                   // * 0.1;
+
+      if (uint16_t(bytes[5]) & 0b00000001) {  // If IR fault is detected for battery 1
+        IRfault1 = 1;  // Set IR fault flag for battery 1
+        }
+        else {
+          IRfault1 = 0; // Clear IR fault flag for battery 1
+        }
+
+       if (uint16_t(bytes[6]) & 0b10000000) {  // If LB empty is detected for battery 1
+        LBempty1 = 1;  // Set LBempty flag for battery 1
+       }
+        else {
+          LBempty1 = 0; // Clear LBempty flag for battery 1
+        }
+        
+        if (uint16_t(bytes[6]) & 0b00100000) {  // If LB sleep is detected for battery 1
+        LBsleep1 = 1;  // Set LBsleep flag for battery 1
+       }
+        else {
+          LBsleep1 = 0; // Clear LBsleep flag for battery 1
+        }
       break;
     }
     case 0x59E: {
@@ -236,6 +261,19 @@ void loop() {
       msg.buf[0] = highByte(soc);
       msg.buf[1] = lowByte(soc);
 
+      if (IRfault1 == 1) {  // If an IR fault is detected for battery 1, set the least significant bit of byte 5 in the CAN message to indicate this to the zombieverter
+        msg.buf[5] = msg.buf[5] | 0b00000001; // Set the least significant bit of byte 5 to 1 to indicate an IR fault for battery 1
+      }
+
+        if (LBempty1 == 1) {  // If an LB empty is detected for battery 1, set the most significant bit of byte 6 in the CAN message to indicate this to the zombieverter
+          msg.buf[6] = msg.buf[6] | 0b10000000; // Set the most significant bit of byte 6 to 1 to indicate an LB empty for battery 1
+        }
+
+          if (LBsleep1 == 1) {  // If an LB sleep is detected for battery 1, set the second most significant bit of byte 6 in the CAN message to indicate this to the zombieverter
+            msg.buf[6] = msg.buf[6] & 0b10111111; // Clear the second most significant bit of byte 6 to ensure only the LB sleep status for battery 1 is indicated in the CAN message
+            msg.buf[6] = msg.buf[6] | 0b00100000; // Set the third most significant bit of byte 6 to 1 to indicate an LB sleep for battery 1
+        }
+      
       for ( uint8_t i = 0; i < 7; i++ ) {
         crc.add(msg.buf[i]);
       }
@@ -247,9 +285,9 @@ void loop() {
     case 0x59E: {
       QCfullCapacity2 = (uint16_t(bytes[2] << 4) + uint16_t(bytes[3] >> 4));                   // * 100 Wh
       QCremainCapacity2 = (uint16_t(bytes[3] << 5) + uint16_t(bytes[4] >> 3));                   // * 100 Wh
+      QCremainCapacity2 &= 0b0000000111111111; // Mask to ensure only the bits used for QC remaining capacity are included
       QCfullCapacity = QCfullCapacity1 + QCfullCapacity2;
       QCremainCapacity = QCremainCapacity1 + QCremainCapacity2;
-      QCremainCapacity1 &= 0b0000000111111111; // Mask to ensure only the bits used for QC remaining capacity are included
       
       msg.buf[2] = QCfullCapacity >> 4;
       msg.buf[3] = lowByte(QCfullCapacity << 4) + (QCremainCapacity >> 5);
