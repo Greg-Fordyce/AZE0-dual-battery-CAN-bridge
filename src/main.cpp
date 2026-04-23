@@ -507,6 +507,12 @@ can3.write(msg);
     msg.buf[4] = highByte(chargelimit2);
     msg.buf[5] = lowByte(chargelimit2);
     can3.write(msg);  
+
+    msg.id = 0x7A3;
+    msg.buf[0] = LB_Usable_SOC;
+    msg.buf[1] = LB_Usable_SOC1;
+    msg.buf[2] = LB_Usable_SOC2;
+    can3.write(msg);
   }  
   } 
 }
