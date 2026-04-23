@@ -43,6 +43,9 @@ const unsigned long period = 100;  //the value is a number of milliseconds
   int QCremainCapacity1 = 0;
   int QCremainCapacity2 = 0;
   int QCremainCapacity = 0;
+  int LB_Usable_SOC1 = 0;
+  int LB_Usable_SOC2 = 0;
+  int LB_Usable_SOC = 0;
 
   int ChgPwrStatMask = 0b00000011;  // Mask to extract the 2 bits of the charge power status from the CAN message
   int ChgPwrStat = 0;  // Charge power status for battery 00b = Reserved 01b = Normal limit PIN 10b = High rate limit PIN 11b = Immediate limit PIN
@@ -63,10 +66,19 @@ const unsigned long period = 100;  //the value is a number of milliseconds
   int HDintCurr2[4] = {0};
   int HDirCoef2[4] = {0};
   int HDcellV2[4] = {0};
+  int LB_Relay_Cut_Request1 = 0;
+  int LB_Discharge_Power_Status1 = 0;
 
   bool IRfault1 = 0;
   bool LBempty1 = 0;
   bool LBsleep1 = 0;
+  bool FailsafeEVerror1 = 0;
+  bool FailsafeChargeStop1 = 0;
+  bool FailsafeTurtle1 = 0;
+  bool LB_MainRelayOn_flag1 = 0;
+  bool LB_Full_CHARGE_flag1 = 0;
+  bool LB_INTER_LOCK1 = 0;
+  bool LB_Voltage_Latch_Flag1 = 0;
 
 
   // int temperature1 = 0;
@@ -110,6 +122,16 @@ void loop() {
     case 0x1DB: {
       battCur1 = uint16_t(bytes[0] << 3) + uint16_t(bytes[1] >> 5);
       battVolt1 = (uint16_t(bytes[2] << 2) + uint16_t(bytes[3] >> 6));   // / 2;
+      LB_Usable_SOC1 = (uint16_t(bytes[4]));  // Extract usable SOC for battery 1 from the CAN message
+      LB_Relay_Cut_Request1 = (bytes[1] & 0b00011000);  // Extract LB relay cut request from the CAN message
+      FailsafeEVerror1 = (bytes[1] & 0b00000001);  // Extract EV error status for failsafe mode from the CAN message
+      FailsafeChargeStop1 = (bytes[1] & 0b00000010);  // Extract charge stop status for failsafe mode from the CAN message
+      FailsafeTurtle1 = (bytes[1] & 0b00000100);  // Extract turtle status for failsafe mode from the CAN message
+      LB_MainRelayOn_flag1 = (bytes[3] & 0b00100000);  // Extract main relay on flag for battery 1 from the CAN message
+      LB_Full_CHARGE_flag1 = (bytes[3] & 0b00010000);  // Extract full charge flag for battery 1 from the CAN message
+      LB_INTER_LOCK1 = (bytes[3] & 0b00001000);  // Extract inter lock flag for battery 1 from the CAN message
+      LB_Discharge_Power_Status1 = (bytes[3] & 0b00000110);  // Extract discharge power status flag for battery 1 from the CAN message
+      LB_Voltage_Latch_Flag1 = (bytes[3] & 0b00000001);  // Extract voltage latch flag for battery 1 from the CAN message
       break;
     }
     case 0x1DC: {
@@ -178,10 +200,44 @@ void loop() {
       battCur = battCur1 + battCur2;
       battCur = battCur << 5;                                                    // Shift bits 5 places to the left to stuff into CAN frame
       msg.buf[0] = highByte(battCur);
-      msg.buf[1] = bytes[1] & B00011111;                                         // Clear the bits used for battCur 
+      msg.buf[1] = bytes[1] & 0b00011111;                                         // Clear the bits used for battCur 
       msg.buf[1] = msg.buf[1] + lowByte(battCur);                                //and add the low byte of battCur shifted 5 places to the left
       battVolt2 = (uint16_t(bytes[2] << 2) + uint16_t(bytes[3] >> 6));                     // / 2;
-      //battVolt = battVolt2;
+      LB_Usable_SOC2 = (uint16_t(bytes[4]));  // Extract usable SOC for battery 2 from the CAN message
+      LB_Usable_SOC = (LB_Usable_SOC1 + LB_Usable_SOC2)/2;  // Average usable SOC from battery 1 and battery 2 to get an overall usable SOC for the system
+
+      if (LB_Relay_Cut_Request1) {
+        msg.buf[1] = bytes[1] & 0b11100111;  // Clear the bits used for LB relay cut request from battery 2 in the CAN message
+        msg.buf[1] += LB_Relay_Cut_Request1;  // Add the LB relay cut request from battery 1 to the CAN message  
+      }
+      if (FailsafeEVerror1) {
+        msg.buf[1] = bytes[1] | 0b00000001;  // Set the bit used for EV error status for failsafe mode from battery 2 in the CAN message  
+      }
+      if (FailsafeChargeStop1) {
+        msg.buf[1] = bytes[1] | 0b00000010;  // Set the bit used for charge stop status for failsafe mode from battery 2 in the CAN message
+      }
+      if (FailsafeTurtle1) {
+        msg.buf[1] = bytes[1] | 0b00000100;  // Set the bit used for turtle status for failsafe mode from battery 2 in the CAN message
+      }
+      if (!LB_MainRelayOn_flag1) {    // If the main relay on flag for battery 1 indicates the main relay is off, 
+        msg.buf[3] = bytes[3] & 0b11011111;  // clear the bit used for main relay on flag for battery 2 in the CAN message to ensure the zombieverter sees the main relay as off
+      }
+      if (LB_Full_CHARGE_flag1) {    // If the full charge flag for battery 1 indicates the battery is fully charged, 
+        msg.buf[3] = bytes[3] | 0b00010000;  // set the bit used for full charge flag for battery 2 in the CAN message to ensure the zombieverter sees the battery as fully charged
+      }
+      if (!LB_INTER_LOCK1) {    // If the inter lock flag for battery 1 indicates the inter lock is not engaged,
+        msg.buf[3] = bytes[3] & 0b11110111;  // clear the bit used for inter lock flag for battery 2 in the CAN message to ensure the zombieverter sees the inter lock as not engaged
+      }
+      if (LB_Discharge_Power_Status1 > (bytes[3] & 0b00000110)) {    // If the discharge power status flag for battery 1 indicates a discharge power limit > that of battery 2,
+        msg.buf[3] = bytes[3] & 0b11111001;  // clear the bits used for discharge power status from battery 2 in the CAN message
+        msg.buf[3] += LB_Discharge_Power_Status1;  // set the bits used for discharge power status flag for battery 1 in the CAN message to ensure the zombieverter sees the more limiting discharge power status
+      }
+      if (LB_Voltage_Latch_Flag1) {    // If the voltage latch flag for battery 1 indicates a voltage latch,
+        msg.buf[3] = bytes[3] | 0b00000001;  // set the bit used for voltage latch flag for battery 2 in the CAN message to ensure the zombieverter sees the voltage latch
+      }
+
+
+
       for ( uint8_t i = 0; i < 7; i++ ) {
         crc.add(msg.buf[i]);
       }
